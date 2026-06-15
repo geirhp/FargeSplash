@@ -1437,6 +1437,8 @@
               handState.busy = true;
               try {
                 await handState.hands.send({ image: handVideo });
+              } catch (error) {
+                console.error("Håndsporing send() feilet:", error);
               } finally {
                 handState.busy = false;
               }
