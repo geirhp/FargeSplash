@@ -533,12 +533,10 @@
 
   <div id="panelHotzone" class="panel-hotzone" role="button" tabindex="0" aria-label="Vis innstillinger" title="Vis innstillinger"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.min.js";
 
     (() => {
-      const Hands = window.Hands;
       const statusEl = document.getElementById("status");
       const physicsControlsEl = document.getElementById("physicsControls");
       const lightControlsEl = document.getElementById("lightControls");
@@ -587,9 +585,9 @@
         detecting: false,
         detected: false,
         stream: null,
-        hands: null,
+        handLandmarker: null,
         rafId: 0,
-        busy: false,
+        lastVideoTime: -1,
         targetUv: new THREE.Vector2(0.5, 0.5),
         currentUv: new THREE.Vector2(0.5, 0.5),
         lastUv: new THREE.Vector2(0.5, 0.5),
@@ -1387,11 +1385,6 @@
           return;
         }
 
-        if (!Hands) {
-          setStatus("MediaPipe Hands klarte ikke å laste.");
-          return;
-        }
-
         handState.detecting = true;
         handState.gotResult = false;
         handState.resultCount = 0;
@@ -1412,41 +1405,30 @@
           handVideo.srcObject = handState.stream;
           await handVideo.play();
 
-          handState.hands = new Hands({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
-          });
-
-          handState.hands.setOptions({
-            selfieMode: true,
-            maxNumHands: 1,
-            modelComplexity: 0,
-            minDetectionConfidence: 0.4,
-            minTrackingConfidence: 0.4
-          });
-
-          handState.hands.onResults((results) => {
-            handState.gotResult = true;
-            handState.resultCount += 1;
-            handState.lastError = null;
-
-            const points = results.multiHandLandmarks?.[0];
-            if (!points) {
-              handState.detected = false;
-              return;
-            }
-
-            handState.detectCount += 1;
-
-            const tip = points[8];
-            handState.targetUv.set(
-              clamp(1 - tip.x, 0.02, 0.98),
-              clamp(1 - tip.y, 0.02, 0.98)
+          if (!handState.handLandmarker) {
+            setStatus("Laster håndsporingsmodell...");
+            const { HandLandmarker, FilesetResolver } = await import(
+              "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/vision_bundle.mjs"
             );
-            handState.detected = true;
-          });
+            const vision = await FilesetResolver.forVisionTasks(
+              "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm"
+            );
+            handState.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+                delegate: "CPU"
+              },
+              runningMode: "VIDEO",
+              numHands: 1,
+              minHandDetectionConfidence: 0.4,
+              minHandPresenceConfidence: 0.4,
+              minTrackingConfidence: 0.4
+            });
+          }
 
           handState.enabled = true;
           handState.detecting = false;
+          handState.lastVideoTime = -1;
           handButton.classList.add("is-active");
           handButton.textContent = "Deaktiver hånd";
           videoShell.classList.add("is-live");
@@ -1454,20 +1436,37 @@
           clearTimeout(skjulTimer);
           setPanelHidden(false);
 
-          const loop = async () => {
+          const loop = () => {
             if (!handState.enabled) {
               return;
             }
 
-            if (!handState.busy && handVideo.readyState >= 2) {
-              handState.busy = true;
-              try {
-                await handState.hands.send({ image: handVideo });
-              } catch (error) {
-                console.error("Håndsporing send() feilet:", error);
-                handState.lastError = `send() feilet: ${error?.message || error}`;
-              } finally {
-                handState.busy = false;
+            if (handVideo.readyState >= 2) {
+              const now = performance.now();
+              if (now > handState.lastVideoTime) {
+                handState.lastVideoTime = now;
+                try {
+                  const result = handState.handLandmarker.detectForVideo(handVideo, now);
+                  handState.gotResult = true;
+                  handState.resultCount += 1;
+                  handState.lastError = null;
+
+                  const points = result.landmarks?.[0];
+                  if (points) {
+                    handState.detectCount += 1;
+                    const tip = points[8];
+                    handState.targetUv.set(
+                      clamp(1 - tip.x, 0.02, 0.98),
+                      clamp(1 - tip.y, 0.02, 0.98)
+                    );
+                    handState.detected = true;
+                  } else {
+                    handState.detected = false;
+                  }
+                } catch (error) {
+                  console.error("Håndsporing detectForVideo() feilet:", error);
+                  handState.lastError = `detectForVideo() feilet: ${error?.message || error}`;
+                }
               }
             }
 
@@ -1491,7 +1490,7 @@
         }
       }
 
-      async function disableHandTracking() {
+      function disableHandTracking() {
         handState.enabled = false;
         handState.detected = false;
         handState.lastError = null;
@@ -1501,16 +1500,6 @@
         handButton.classList.remove("is-active");
         handButton.textContent = "Aktiver hånd";
         videoShell.classList.remove("is-live");
-
-        if (handState.hands?.close) {
-          try {
-            await handState.hands.close();
-          } catch (error) {
-            console.warn(error);
-          }
-        }
-
-        handState.hands = null;
 
         if (handState.stream) {
           handState.stream.getTracks().forEach((track) => track.stop());
