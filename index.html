@@ -123,6 +123,32 @@
       animation: kevinPop 0.8s ease-out;
     }
 
+    .clear-text {
+      display: inline-block;
+      pointer-events: auto;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .clear-text.tapped {
+      animation: clearFlash 0.5s ease-out;
+    }
+
+    @keyframes clearFlash {
+      0% {
+        opacity: 1;
+        text-shadow: none;
+      }
+      30% {
+        opacity: 0.2;
+        text-shadow: 0 0 40px #ffffff, 0 0 90px #ffffff;
+      }
+      100% {
+        opacity: 1;
+        text-shadow: none;
+      }
+    }
+
     @keyframes kevinPop {
       0% {
         transform: scale(1) rotate(0deg);
@@ -489,7 +515,7 @@
 </head>
 <body>
   <div class="header">
-    <h1><span id="kevinK" class="magic-k" role="button" aria-label="Trykk for magisk effekt">KEVINS</span> FARGESPLASH</h1>
+    <h1><span id="kevinK" class="magic-k" role="button" aria-label="Trykk for magisk effekt">KEVINS</span> <span id="fargesplashReset" class="clear-text" role="button" tabindex="0" aria-label="Trykk for å tømme lerretet">FARGESPLASH</span></h1>
   </div>
 
   <aside class="panel">
@@ -551,6 +577,7 @@
       const panelClose = document.getElementById("panelClose");
       const panelHotzone = document.getElementById("panelHotzone");
       const kevinK = document.getElementById("kevinK");
+      const fargesplashReset = document.getElementById("fargesplashReset");
 
       const settings = {
         gravity: 0.18,
@@ -1664,6 +1691,35 @@
         const effect = kevinEffects[Math.floor(Math.random() * kevinEffects.length)];
         effect();
         setStatus("Kevin-magi! Berør K igjen for noe nytt og gøy.");
+      });
+
+      let fargesplashResetTimer = null;
+      fargesplashReset.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        clearTimeout(fargesplashResetTimer);
+        fargesplashReset.classList.remove("tapped");
+        void fargesplashReset.offsetWidth;
+        fargesplashReset.classList.add("tapped");
+        fargesplashResetTimer = setTimeout(() => fargesplashReset.classList.remove("tapped"), 500);
+
+        clearPingPong(dyeBuffer);
+        clearPingPong(velocityBuffer);
+        clearPingPong(pressureBuffer);
+        runtime.frozen = false;
+        unlockFrozenSettings();
+
+        if (loadedTexture) {
+          loadedTexture = null;
+          lastBildeButton.classList.remove("is-active");
+          nullstillBildeButton.disabled = true;
+          displayMaterial.uniforms.uRealisticMode.value = 0.0;
+          try {
+            localStorage.removeItem("splashImage");
+            localStorage.removeItem("splashImageActive");
+          } catch (e) {}
+        }
+
+        setStatus("Lerretet er tomt igjen. Dra over feltet for å splasje farger.");
       });
 
       lastBildeButton.addEventListener("click", () => {
