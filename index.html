@@ -596,6 +596,7 @@
         lastEmit: 0,
         gotResult: false,
         resultCount: 0,
+        detectCount: 0,
         lastError: null,
         watchdogId: 0
       };
@@ -1394,6 +1395,7 @@
         handState.detecting = true;
         handState.gotResult = false;
         handState.resultCount = 0;
+        handState.detectCount = 0;
         handState.lastError = null;
         setStatus("Ber om kameratilgang for håndsporing...");
 
@@ -1431,6 +1433,8 @@
               handState.detected = false;
               return;
             }
+
+            handState.detectCount += 1;
 
             const tip = points[8];
             handState.targetUv.set(
@@ -1844,7 +1848,7 @@
           if (handState.lastError) {
             setStatus(`Håndsporing-feil: ${handState.lastError}`);
           } else {
-            setStatus(`Håndsporing aktiv (${handState.resultCount} svar fra modell). Løft en hånd inn i bildet.`);
+            setStatus(`Håndsporing aktiv (${handState.resultCount} svar, ${handState.detectCount} med hånd, video ${handVideo.videoWidth}x${handVideo.videoHeight}). Løft en hånd inn i bildet.`);
           }
           clearTimeout(skjulTimer);
           setPanelHidden(false);
