@@ -1417,10 +1417,11 @@
           });
 
           handState.hands.setOptions({
+            selfieMode: true,
             maxNumHands: 1,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.62,
-            minTrackingConfidence: 0.58
+            modelComplexity: 0,
+            minDetectionConfidence: 0.4,
+            minTrackingConfidence: 0.4
           });
 
           handState.hands.onResults((results) => {
