@@ -533,7 +533,7 @@
 
   <div id="panelHotzone" class="panel-hotzone" role="button" tabindex="0" aria-label="Vis innstillinger" title="Vis innstillinger"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.min.js";
 
@@ -593,7 +593,10 @@
         targetUv: new THREE.Vector2(0.5, 0.5),
         currentUv: new THREE.Vector2(0.5, 0.5),
         lastUv: new THREE.Vector2(0.5, 0.5),
-        lastEmit: 0
+        lastEmit: 0,
+        gotResult: false,
+        lastError: null,
+        watchdogId: 0
       };
 
       const runtime = {
@@ -1388,6 +1391,8 @@
         }
 
         handState.detecting = true;
+        handState.gotResult = false;
+        handState.lastError = null;
         setStatus("Ber om kameratilgang for håndsporing...");
 
         try {
@@ -1404,7 +1409,7 @@
           await handVideo.play();
 
           handState.hands = new Hands({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
           });
 
           handState.hands.setOptions({
@@ -1415,6 +1420,9 @@
           });
 
           handState.hands.onResults((results) => {
+            handState.gotResult = true;
+            handState.lastError = null;
+
             const points = results.multiHandLandmarks?.[0];
             if (!points) {
               handState.detected = false;
@@ -1447,6 +1455,7 @@
                 await handState.hands.send({ image: handVideo });
               } catch (error) {
                 console.error("Håndsporing send() feilet:", error);
+                handState.lastError = `send() feilet: ${error?.message || error}`;
               } finally {
                 handState.busy = false;
               }
@@ -1456,6 +1465,13 @@
           };
 
           handState.rafId = requestAnimationFrame(loop);
+
+          clearTimeout(handState.watchdogId);
+          handState.watchdogId = setTimeout(() => {
+            if (handState.enabled && !handState.gotResult) {
+              handState.lastError = "Sporingsmotoren svarte ikke (tidsavbrudd). Sjekk nettforbindelsen og prøv å deaktivere/aktivere hånd igjen.";
+            }
+          }, 8000);
         } catch (error) {
           console.error(error);
           handState.detecting = false;
@@ -1466,6 +1482,9 @@
       async function disableHandTracking() {
         handState.enabled = false;
         handState.detected = false;
+        handState.lastError = null;
+        handState.gotResult = false;
+        clearTimeout(handState.watchdogId);
         cancelAnimationFrame(handState.rafId);
         handButton.classList.remove("is-active");
         handButton.textContent = "Aktiver hånd";
@@ -1815,7 +1834,11 @@
         render();
 
         if (handState.enabled && !handState.detected && !handState.detecting) {
-          setStatus("Håndsporing aktiv. Løft en hånd inn i bildet.");
+          setStatus(
+            handState.lastError
+              ? `Håndsporing-feil: ${handState.lastError}`
+              : "Håndsporing aktiv. Løft en hånd inn i bildet."
+          );
         }
       }
 
@@ -1857,6 +1880,13 @@
 
       requestAnimationFrame(tick);
     })();
+  </script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch(() => {});
+      });
+    }
   </script>
 </body>
 </html>
