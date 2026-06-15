@@ -595,6 +595,7 @@
         lastUv: new THREE.Vector2(0.5, 0.5),
         lastEmit: 0,
         gotResult: false,
+        resultCount: 0,
         lastError: null,
         watchdogId: 0
       };
@@ -1392,6 +1393,7 @@
 
         handState.detecting = true;
         handState.gotResult = false;
+        handState.resultCount = 0;
         handState.lastError = null;
         setStatus("Ber om kameratilgang for håndsporing...");
 
@@ -1421,6 +1423,7 @@
 
           handState.hands.onResults((results) => {
             handState.gotResult = true;
+            handState.resultCount += 1;
             handState.lastError = null;
 
             const points = results.multiHandLandmarks?.[0];
@@ -1443,6 +1446,8 @@
           handButton.textContent = "Deaktiver hånd";
           videoShell.classList.add("is-live");
           setStatus("Håndsporing aktivert. Beveg pekefingeren i luften.");
+          clearTimeout(skjulTimer);
+          setPanelHidden(false);
 
           const loop = async () => {
             if (!handState.enabled) {
@@ -1475,7 +1480,9 @@
         } catch (error) {
           console.error(error);
           handState.detecting = false;
-          setStatus("Kameratilgang feilet. Håndsporing kunne ikke starte.");
+          clearTimeout(skjulTimer);
+          setPanelHidden(false);
+          setStatus(`Kameratilgang feilet: ${error?.message || error}`);
         }
       }
 
@@ -1834,11 +1841,13 @@
         render();
 
         if (handState.enabled && !handState.detected && !handState.detecting) {
-          setStatus(
-            handState.lastError
-              ? `Håndsporing-feil: ${handState.lastError}`
-              : "Håndsporing aktiv. Løft en hånd inn i bildet."
-          );
+          if (handState.lastError) {
+            setStatus(`Håndsporing-feil: ${handState.lastError}`);
+          } else {
+            setStatus(`Håndsporing aktiv (${handState.resultCount} svar fra modell). Løft en hånd inn i bildet.`);
+          }
+          clearTimeout(skjulTimer);
+          setPanelHidden(false);
         }
       }
 
