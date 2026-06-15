@@ -593,8 +593,6 @@
         lastUv: new THREE.Vector2(0.5, 0.5),
         lastEmit: 0,
         gotResult: false,
-        resultCount: 0,
-        detectCount: 0,
         lastError: null,
         watchdogId: 0
       };
@@ -1387,8 +1385,6 @@
 
         handState.detecting = true;
         handState.gotResult = false;
-        handState.resultCount = 0;
-        handState.detectCount = 0;
         handState.lastError = null;
         setStatus("Ber om kameratilgang for håndsporing...");
 
@@ -1433,8 +1429,6 @@
           handButton.textContent = "Deaktiver hånd";
           videoShell.classList.add("is-live");
           setStatus("Håndsporing aktivert. Beveg pekefingeren i luften.");
-          clearTimeout(skjulTimer);
-          setPanelHidden(false);
 
           const loop = () => {
             if (!handState.enabled) {
@@ -1448,12 +1442,10 @@
                 try {
                   const result = handState.handLandmarker.detectForVideo(handVideo, now);
                   handState.gotResult = true;
-                  handState.resultCount += 1;
                   handState.lastError = null;
 
                   const points = result.landmarks?.[0];
                   if (points) {
-                    handState.detectCount += 1;
                     const tip = points[8];
                     handState.targetUv.set(
                       clamp(1 - tip.x, 0.02, 0.98),
@@ -1465,7 +1457,7 @@
                   }
                 } catch (error) {
                   console.error("Håndsporing detectForVideo() feilet:", error);
-                  handState.lastError = `detectForVideo() feilet: ${error?.message || error}`;
+                  handState.lastError = "Håndsporing feilet. Prøv å deaktivere og aktivere igjen.";
                 }
               }
             }
@@ -1478,15 +1470,13 @@
           clearTimeout(handState.watchdogId);
           handState.watchdogId = setTimeout(() => {
             if (handState.enabled && !handState.gotResult) {
-              handState.lastError = "Sporingsmotoren svarte ikke (tidsavbrudd). Sjekk nettforbindelsen og prøv å deaktivere/aktivere hånd igjen.";
+              handState.lastError = "Fant ingen respons fra kameraet. Prøv å deaktivere og aktivere håndsporing igjen.";
             }
           }, 8000);
         } catch (error) {
           console.error(error);
           handState.detecting = false;
-          clearTimeout(skjulTimer);
-          setPanelHidden(false);
-          setStatus(`Kameratilgang feilet: ${error?.message || error}`);
+          setStatus("Kameratilgang feilet. Håndsporing kunne ikke starte.");
         }
       }
 
@@ -1835,13 +1825,7 @@
         render();
 
         if (handState.enabled && !handState.detected && !handState.detecting) {
-          if (handState.lastError) {
-            setStatus(`Håndsporing-feil: ${handState.lastError}`);
-          } else {
-            setStatus(`Håndsporing aktiv (${handState.resultCount} svar, ${handState.detectCount} med hånd, video ${handVideo.videoWidth}x${handVideo.videoHeight}). Løft en hånd inn i bildet.`);
-          }
-          clearTimeout(skjulTimer);
-          setPanelHidden(false);
+          setStatus(handState.lastError || "Håndsporing aktiv. Løft en hånd inn i bildet.");
         }
       }
 
