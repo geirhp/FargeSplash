@@ -1620,6 +1620,42 @@
         handOverlayCtx.restore();
       }
 
+      async function applyWidestCameraZoom(stream) {
+        const track = stream?.getVideoTracks?.()[0];
+        if (!track) {
+          return "Fant ingen videostrøm å justere.";
+        }
+
+        if (typeof track.getCapabilities !== "function" || typeof track.applyConstraints !== "function") {
+          return "Kameraet støtter ikke zoomstyring i denne nettleseren.";
+        }
+
+        const capabilities = track.getCapabilities();
+        const advanced = [];
+
+        if (typeof capabilities.zoom?.min === "number") {
+          advanced.push({ zoom: capabilities.zoom.min });
+        }
+
+        if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
+          advanced.push({ focusMode: "continuous" });
+        }
+
+        if (advanced.length === 0) {
+          return "Kameraet rapporterer ingen justerbar zoom. Bruker standard vidvinkel.";
+        }
+
+        try {
+          await track.applyConstraints({ advanced });
+          const settings = typeof track.getSettings === "function" ? track.getSettings() : {};
+          const zoomText = typeof settings.zoom === "number" ? ` Zoom: ${settings.zoom.toFixed(2)}.` : "";
+          return `Vidvinkel aktivert med laveste kamerazoom.${zoomText}`;
+        } catch (error) {
+          console.warn("Kunne ikke sette kamera til maks vidvinkel:", error);
+          return "Kunne ikke tvinge maks vidvinkel. Bruker kameraets standardzoom.";
+        }
+      }
+
       async function enableHandTracking() {
         if (handState.enabled || handState.detecting) {
           return;
@@ -1633,13 +1669,16 @@
         try {
           handState.stream = await navigator.mediaDevices.getUserMedia({
             video: {
-              facingMode: "user",
+              facingMode: { ideal: "user" },
               width: { ideal: 720 },
               height: { ideal: 1280 },
-              aspectRatio: { ideal: 9 / 16 }
+              aspectRatio: { ideal: 9 / 16 },
+              zoom: { ideal: 1 }
             },
             audio: false
           });
+
+          const wideAngleStatus = await applyWidestCameraZoom(handState.stream);
 
           handVideo.srcObject = handState.stream;
           await handVideo.play();
@@ -1671,7 +1710,7 @@
           handButton.classList.add("is-active");
           handButton.textContent = "Deaktiver hånd";
           videoShell.classList.add("is-live");
-          setStatus("Håndsporing aktivert. Beveg én eller flere utstrakte fingertupper i luften.");
+          setStatus(`${wideAngleStatus} Beveg én eller flere utstrakte fingertupper i luften.`);
 
           const loop = () => {
             if (!handState.enabled) {
