@@ -440,15 +440,34 @@
       text-transform: uppercase;
     }
 
-    #handVideo {
-      display: block;
+    .video-stage {
+      position: relative;
       width: 100%;
       aspect-ratio: 16 / 10;
       border-radius: 12px;
+      overflow: hidden;
       background: #020202;
+    }
+
+    #handVideo,
+    #handOverlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 12px;
+    }
+
+    #handVideo {
+      display: block;
       object-fit: cover;
       transform: scaleX(-1);
       filter: saturate(0) contrast(1.05) brightness(0.82);
+    }
+
+    #handOverlay {
+      z-index: 2;
+      pointer-events: none;
     }
 
     @media (max-width: 920px) {
@@ -552,7 +571,10 @@
   </aside>
 
   <div class="video-shell" id="videoShell">
-    <video id="handVideo" playsinline muted></video>
+    <div class="video-stage">
+      <video id="handVideo" playsinline muted></video>
+      <canvas id="handOverlay" aria-hidden="true"></canvas>
+    </div>
     <div class="video-label">Håndsporing</div>
   </div>
 
@@ -572,6 +594,8 @@
       const imageFileInput = document.getElementById("imageFileInput");
       const videoShell = document.getElementById("videoShell");
       const handVideo = document.getElementById("handVideo");
+      const handOverlay = document.getElementById("handOverlay");
+      const handOverlayCtx = handOverlay.getContext("2d");
       const panelEl = document.querySelector(".panel");
       const panelClose = document.getElementById("panelClose");
       const panelHotzone = document.getElementById("panelHotzone");
@@ -1402,7 +1426,129 @@
       renderer.domElement.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
       window.addEventListener("pointercancel", onPointerUp);
-      window.addEventListener("resize", resize);
+      window.addEventListener("resize", () => {
+        resize();
+        resizeHandOverlay();
+        clearHandOverlay();
+      });
+
+      const handConnections = [
+        [0, 1], [1, 2], [2, 3], [3, 4],
+        [0, 5], [5, 6], [6, 7], [7, 8],
+        [0, 9], [9, 10], [10, 11], [11, 12],
+        [0, 13], [13, 14], [14, 15], [15, 16],
+        [0, 17], [17, 18], [18, 19], [19, 20],
+        [5, 9], [9, 13], [13, 17]
+      ];
+
+      function resizeHandOverlay() {
+        const rect = handOverlay.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const width = Math.max(1, Math.floor(rect.width * dpr));
+        const height = Math.max(1, Math.floor(rect.height * dpr));
+
+        if (handOverlay.width !== width || handOverlay.height !== height) {
+          handOverlay.width = width;
+          handOverlay.height = height;
+        }
+
+        handOverlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function clearHandOverlay() {
+        resizeHandOverlay();
+        const rect = handOverlay.getBoundingClientRect();
+        handOverlayCtx.clearRect(0, 0, rect.width, rect.height);
+      }
+
+      function videoPointToOverlay(point) {
+        const rect = handOverlay.getBoundingClientRect();
+        const videoWidth = handVideo.videoWidth || rect.width || 1;
+        const videoHeight = handVideo.videoHeight || rect.height || 1;
+        const sourceAspect = videoWidth / videoHeight;
+        const targetAspect = rect.width / Math.max(1, rect.height);
+
+        let drawWidth = rect.width;
+        let drawHeight = rect.height;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        if (sourceAspect > targetAspect) {
+          drawHeight = rect.height;
+          drawWidth = drawHeight * sourceAspect;
+          offsetX = (rect.width - drawWidth) * 0.5;
+        } else {
+          drawWidth = rect.width;
+          drawHeight = drawWidth / sourceAspect;
+          offsetY = (rect.height - drawHeight) * 0.5;
+        }
+
+        return {
+          // The video is mirrored with CSS scaleX(-1), so the overlay mirrors x too.
+          x: offsetX + (1 - point.x) * drawWidth,
+          y: offsetY + point.y * drawHeight
+        };
+      }
+
+      function drawHandOverlay(points) {
+        clearHandOverlay();
+        if (!points || !points.length) return;
+
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+
+        const mapped = points.map((point) => {
+          const screen = videoPointToOverlay(point);
+          minX = Math.min(minX, screen.x);
+          minY = Math.min(minY, screen.y);
+          maxX = Math.max(maxX, screen.x);
+          maxY = Math.max(maxY, screen.y);
+          return screen;
+        });
+
+        handOverlayCtx.save();
+        handOverlayCtx.lineCap = "round";
+        handOverlayCtx.lineJoin = "round";
+
+        // Bounding box: the detected hand area.
+        handOverlayCtx.strokeStyle = "rgba(0, 229, 255, 0.92)";
+        handOverlayCtx.lineWidth = 2;
+        handOverlayCtx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+
+        // Skeleton lines.
+        handOverlayCtx.strokeStyle = "rgba(98, 255, 89, 0.9)";
+        handOverlayCtx.lineWidth = 2;
+        handOverlayCtx.beginPath();
+        handConnections.forEach(([from, to]) => {
+          const a = mapped[from];
+          const b = mapped[to];
+          if (!a || !b) return;
+          handOverlayCtx.moveTo(a.x, a.y);
+          handOverlayCtx.lineTo(b.x, b.y);
+        });
+        handOverlayCtx.stroke();
+
+        // Landmarks, with the active fingertip emphasized.
+        mapped.forEach((point, index) => {
+          handOverlayCtx.beginPath();
+          handOverlayCtx.arc(point.x, point.y, index === 8 ? 6 : 3, 0, Math.PI * 2);
+          handOverlayCtx.fillStyle = index === 8
+            ? "rgba(255, 62, 240, 0.98)"
+            : "rgba(255, 255, 255, 0.88)";
+          handOverlayCtx.fill();
+        });
+
+        const tip = mapped[8];
+        if (tip) {
+          handOverlayCtx.font = "700 11px Inter, sans-serif";
+          handOverlayCtx.fillStyle = "rgba(255, 62, 240, 0.98)";
+          handOverlayCtx.fillText("PEKEFINGER", tip.x + 8, tip.y - 8);
+        }
+
+        handOverlayCtx.restore();
+      }
 
       async function enableHandTracking() {
         if (handState.enabled || handState.detecting) {
@@ -1472,6 +1618,8 @@
 
                   const points = result.landmarks?.[0];
                   if (points) {
+                    drawHandOverlay(points);
+
                     const tip = points[8];
                     handState.targetUv.set(
                       clamp(1 - tip.x, 0.02, 0.98),
@@ -1479,10 +1627,12 @@
                     );
                     handState.detected = true;
                   } else {
+                    clearHandOverlay();
                     handState.detected = false;
                   }
                 } catch (error) {
                   console.error("Håndsporing detectForVideo() feilet:", error);
+                  clearHandOverlay();
                   handState.lastError = "Håndsporing feilet. Prøv å deaktivere og aktivere igjen.";
                 }
               }
@@ -1511,6 +1661,7 @@
         handState.detected = false;
         handState.lastError = null;
         handState.gotResult = false;
+        clearHandOverlay();
         clearTimeout(handState.watchdogId);
         cancelAnimationFrame(handState.rafId);
         handButton.classList.remove("is-active");
@@ -1900,6 +2051,8 @@
       });
 
       resize();
+      resizeHandOverlay();
+      clearHandOverlay();
       setStatus("Dra over det svarte feltet for å injisere lysende blekk.");
 
       // Auto-load saved image from localStorage
