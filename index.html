@@ -412,7 +412,7 @@
       right: 24px;
       bottom: 24px;
       z-index: 3;
-      width: min(240px, 36vw);
+      width: min(190px, 34vw);
       padding: 10px;
       border-radius: 18px;
       border: 1px solid rgba(255, 255, 255, 0.13);
@@ -443,7 +443,7 @@
     .video-stage {
       position: relative;
       width: 100%;
-      aspect-ratio: 16 / 10;
+      aspect-ratio: 9 / 16;
       border-radius: 12px;
       overflow: hidden;
       background: #020202;
@@ -461,6 +461,7 @@
     #handVideo {
       display: block;
       object-fit: cover;
+      object-position: center center;
       transform: scaleX(-1);
       filter: saturate(0) contrast(1.05) brightness(0.82);
     }
@@ -492,9 +493,10 @@
       }
 
       .video-shell {
+        top: calc(84px + env(safe-area-inset-top));
         right: calc(12px + env(safe-area-inset-right));
-        bottom: calc(12px + env(safe-area-inset-bottom));
-        width: min(180px, 42vw);
+        bottom: auto;
+        width: min(170px, 40vw);
       }
     }
 
@@ -526,7 +528,8 @@
       }
 
       .video-shell {
-        width: min(130px, 34vw);
+        top: calc(74px + env(safe-area-inset-top));
+        width: min(150px, 42vw);
       }
     }
   </style>
@@ -638,10 +641,8 @@
         handLandmarker: null,
         rafId: 0,
         lastVideoTime: -1,
-        targetUv: new THREE.Vector2(0.5, 0.5),
-        currentUv: new THREE.Vector2(0.5, 0.5),
-        lastUv: new THREE.Vector2(0.5, 0.5),
-        lastEmit: 0,
+        fingerTargets: new Map(),
+        fingers: new Map(),
         gotResult: false,
         lastError: null,
         watchdogId: 0
@@ -1441,6 +1442,14 @@
         [5, 9], [9, 13], [13, 17]
       ];
 
+      const fingerTips = [
+        { index: 4, joint: 3, label: "TOMMEL" },
+        { index: 8, joint: 6, label: "PEKE" },
+        { index: 12, joint: 10, label: "LANG" },
+        { index: 16, joint: 14, label: "RING" },
+        { index: 20, joint: 18, label: "LILLE" }
+      ];
+
       function resizeHandOverlay() {
         const rect = handOverlay.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1461,6 +1470,56 @@
         handOverlayCtx.clearRect(0, 0, rect.width, rect.height);
       }
 
+      function distance2D(a, b) {
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
+      function getActiveFingerTips(points) {
+        if (!points || points.length < 21) return [];
+
+        const wrist = points[0];
+        const active = fingerTips.filter((finger) => {
+          const tip = points[finger.index];
+          const joint = points[finger.joint];
+          if (!tip || !joint || !wrist) return false;
+
+          // Orientation-independent extension test: an extended fingertip is
+          // usually farther from the wrist than its inner joint.
+          return distance2D(tip, wrist) > distance2D(joint, wrist) * 1.06;
+        });
+
+        // Keep drawing usable even when the extension test is uncertain.
+        return active.length ? active : [fingerTips[1]];
+      }
+
+      function updateHandFingerTargets(hands) {
+        const nextTargets = new Map();
+
+        hands.forEach((points, handIndex) => {
+          const activeTips = getActiveFingerTips(points);
+
+          activeTips.forEach((finger) => {
+            const tip = points[finger.index];
+            if (!tip) return;
+
+            const id = `${handIndex}-${finger.index}`;
+            nextTargets.set(id, {
+              uv: new THREE.Vector2(
+                clamp(1 - tip.x, 0.02, 0.98),
+                clamp(1 - tip.y, 0.02, 0.98)
+              ),
+              seed: handIndex * 3.17 + finger.index * 0.431,
+              label: finger.label,
+              index: finger.index
+            });
+          });
+        });
+
+        handState.fingerTargets = nextTargets;
+      }
+
       function videoPointToOverlay(point) {
         const rect = handOverlay.getBoundingClientRect();
         const videoWidth = handVideo.videoWidth || rect.width || 1;
@@ -1473,6 +1532,7 @@
         let offsetX = 0;
         let offsetY = 0;
 
+        // Match CSS object-fit: cover, so the overlay follows the visible video crop.
         if (sourceAspect > targetAspect) {
           drawHeight = rect.height;
           drawWidth = drawHeight * sourceAspect;
@@ -1490,62 +1550,72 @@
         };
       }
 
-      function drawHandOverlay(points) {
+      function drawHandsOverlay(hands) {
         clearHandOverlay();
-        if (!points || !points.length) return;
+        if (!hands || !hands.length) return;
 
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-
-        const mapped = points.map((point) => {
-          const screen = videoPointToOverlay(point);
-          minX = Math.min(minX, screen.x);
-          minY = Math.min(minY, screen.y);
-          maxX = Math.max(maxX, screen.x);
-          maxY = Math.max(maxY, screen.y);
-          return screen;
-        });
+        const activeTipIds = new Set(handState.fingerTargets.keys());
+        let activeCount = 0;
 
         handOverlayCtx.save();
         handOverlayCtx.lineCap = "round";
         handOverlayCtx.lineJoin = "round";
 
-        // Bounding box: the detected hand area.
-        handOverlayCtx.strokeStyle = "rgba(0, 229, 255, 0.92)";
-        handOverlayCtx.lineWidth = 2;
-        handOverlayCtx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+        hands.forEach((points, handIndex) => {
+          if (!points || !points.length) return;
 
-        // Skeleton lines.
-        handOverlayCtx.strokeStyle = "rgba(98, 255, 89, 0.9)";
-        handOverlayCtx.lineWidth = 2;
-        handOverlayCtx.beginPath();
-        handConnections.forEach(([from, to]) => {
-          const a = mapped[from];
-          const b = mapped[to];
-          if (!a || !b) return;
-          handOverlayCtx.moveTo(a.x, a.y);
-          handOverlayCtx.lineTo(b.x, b.y);
-        });
-        handOverlayCtx.stroke();
+          let minX = Infinity;
+          let minY = Infinity;
+          let maxX = -Infinity;
+          let maxY = -Infinity;
 
-        // Landmarks, with the active fingertip emphasized.
-        mapped.forEach((point, index) => {
+          const mapped = points.map((point) => {
+            const screen = videoPointToOverlay(point);
+            minX = Math.min(minX, screen.x);
+            minY = Math.min(minY, screen.y);
+            maxX = Math.max(maxX, screen.x);
+            maxY = Math.max(maxY, screen.y);
+            return screen;
+          });
+
+          // Bounding box: the detected hand area.
+          handOverlayCtx.strokeStyle = "rgba(0, 229, 255, 0.92)";
+          handOverlayCtx.lineWidth = 2;
+          handOverlayCtx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+
+          // Skeleton lines.
+          handOverlayCtx.strokeStyle = "rgba(98, 255, 89, 0.9)";
+          handOverlayCtx.lineWidth = 2;
           handOverlayCtx.beginPath();
-          handOverlayCtx.arc(point.x, point.y, index === 8 ? 6 : 3, 0, Math.PI * 2);
-          handOverlayCtx.fillStyle = index === 8
-            ? "rgba(255, 62, 240, 0.98)"
-            : "rgba(255, 255, 255, 0.88)";
-          handOverlayCtx.fill();
+          handConnections.forEach(([from, to]) => {
+            const a = mapped[from];
+            const b = mapped[to];
+            if (!a || !b) return;
+            handOverlayCtx.moveTo(a.x, a.y);
+            handOverlayCtx.lineTo(b.x, b.y);
+          });
+          handOverlayCtx.stroke();
+
+          // Landmarks, with active drawing fingertips emphasized.
+          mapped.forEach((point, index) => {
+            const isTip = fingerTips.some((finger) => finger.index === index);
+            const isActive = activeTipIds.has(`${handIndex}-${index}`);
+            if (isActive) activeCount += 1;
+
+            handOverlayCtx.beginPath();
+            handOverlayCtx.arc(point.x, point.y, isActive ? 6 : isTip ? 4 : 3, 0, Math.PI * 2);
+            handOverlayCtx.fillStyle = isActive
+              ? "rgba(255, 62, 240, 0.98)"
+              : isTip
+                ? "rgba(0, 229, 255, 0.86)"
+                : "rgba(255, 255, 255, 0.82)";
+            handOverlayCtx.fill();
+          });
         });
 
-        const tip = mapped[8];
-        if (tip) {
-          handOverlayCtx.font = "700 11px Inter, sans-serif";
-          handOverlayCtx.fillStyle = "rgba(255, 62, 240, 0.98)";
-          handOverlayCtx.fillText("PEKEFINGER", tip.x + 8, tip.y - 8);
-        }
+        handOverlayCtx.font = "700 11px Inter, sans-serif";
+        handOverlayCtx.fillStyle = "rgba(255, 255, 255, 0.92)";
+        handOverlayCtx.fillText(`${activeCount} AKTIVE FINGRE`, 8, 16);
 
         handOverlayCtx.restore();
       }
@@ -1564,8 +1634,9 @@
           handState.stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: "user",
-              width: { ideal: 640 },
-              height: { ideal: 480 }
+              width: { ideal: 720 },
+              height: { ideal: 1280 },
+              aspectRatio: { ideal: 9 / 16 }
             },
             audio: false
           });
@@ -1587,7 +1658,7 @@
                 delegate: "CPU"
               },
               runningMode: "VIDEO",
-              numHands: 1,
+              numHands: 2,
               minHandDetectionConfidence: 0.4,
               minHandPresenceConfidence: 0.4,
               minTrackingConfidence: 0.4
@@ -1600,7 +1671,7 @@
           handButton.classList.add("is-active");
           handButton.textContent = "Deaktiver hånd";
           videoShell.classList.add("is-live");
-          setStatus("Håndsporing aktivert. Beveg pekefingeren i luften.");
+          setStatus("Håndsporing aktivert. Beveg én eller flere utstrakte fingertupper i luften.");
 
           const loop = () => {
             if (!handState.enabled) {
@@ -1616,17 +1687,13 @@
                   handState.gotResult = true;
                   handState.lastError = null;
 
-                  const points = result.landmarks?.[0];
-                  if (points) {
-                    drawHandOverlay(points);
-
-                    const tip = points[8];
-                    handState.targetUv.set(
-                      clamp(1 - tip.x, 0.02, 0.98),
-                      clamp(1 - tip.y, 0.02, 0.98)
-                    );
-                    handState.detected = true;
+                  const hands = result.landmarks || [];
+                  if (hands.length) {
+                    updateHandFingerTargets(hands);
+                    drawHandsOverlay(hands);
+                    handState.detected = handState.fingerTargets.size > 0;
                   } else {
+                    handState.fingerTargets.clear();
                     clearHandOverlay();
                     handState.detected = false;
                   }
@@ -1661,6 +1728,8 @@
         handState.detected = false;
         handState.lastError = null;
         handState.gotResult = false;
+        handState.fingerTargets.clear();
+        handState.fingers.clear();
         clearHandOverlay();
         clearTimeout(handState.watchdogId);
         cancelAnimationFrame(handState.rafId);
@@ -1933,19 +2002,63 @@
           return;
         }
 
-        if (handState.detected) {
-          handState.currentUv.lerp(handState.targetUv, 0.34);
-          tmpVec2.subVectors(handState.currentUv, handState.lastUv);
-          const moving = tmpVec2.lengthSq() > 0.000001;
-          const timedPulse = runtime.time - handState.lastEmit > 0.08;
+        if (!handState.detected || handState.fingerTargets.size === 0) {
+          handState.fingers.forEach((finger, id) => {
+            if (runtime.time - finger.lastSeen > 0.25) {
+              handState.fingers.delete(id);
+            }
+          });
+          return;
+        }
 
-          if (moving || timedPulse) {
-            enqueueSplat(handState.currentUv, tmpVec2.clone().multiplyScalar(1.25), 1.15, 1.0, runtime.time * 2.7);
-            handState.lastEmit = runtime.time;
+        const seen = new Set();
+
+        handState.fingerTargets.forEach((target, id) => {
+          seen.add(id);
+
+          let finger = handState.fingers.get(id);
+          if (!finger) {
+            finger = {
+              currentUv: target.uv.clone(),
+              lastUv: target.uv.clone(),
+              lastEmit: 0,
+              lastSeen: runtime.time,
+              seed: target.seed
+            };
+            handState.fingers.set(id, finger);
           }
 
-          handState.lastUv.copy(handState.currentUv);
-        }
+          finger.lastSeen = runtime.time;
+          finger.currentUv.lerp(target.uv, 0.34);
+          tmpVec2.subVectors(finger.currentUv, finger.lastUv);
+
+          const moving = tmpVec2.lengthSq() > 0.000001;
+          const timedPulse = runtime.time - finger.lastEmit > 0.08;
+
+          if (moving || timedPulse) {
+            const speed = clamp(tmpVec2.length() * 90, 0.75, 1.8);
+            const isThumb = target.index === 4;
+            const strength = (isThumb ? 0.95 : 1.1) * speed;
+            const radiusScale = isThumb ? 0.88 : 0.96;
+
+            enqueueSplat(
+              finger.currentUv,
+              tmpVec2.clone().multiplyScalar(1.25),
+              strength,
+              radiusScale,
+              finger.seed + runtime.time * 1.7
+            );
+            finger.lastEmit = runtime.time;
+          }
+
+          finger.lastUv.copy(finger.currentUv);
+        });
+
+        handState.fingers.forEach((finger, id) => {
+          if (!seen.has(id) && runtime.time - finger.lastSeen > 0.25) {
+            handState.fingers.delete(id);
+          }
+        });
       }
 
       function simulate(dt) {
