@@ -464,14 +464,6 @@
       transform: translateY(0);
     }
 
-    .video-label {
-      margin-top: 8px;
-      color: rgba(255, 255, 255, 0.58);
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-    }
 
     .video-stage {
       position: relative;
@@ -613,7 +605,6 @@
       <video id="handVideo" playsinline muted></video>
       <canvas id="handOverlay" aria-hidden="true"></canvas>
     </div>
-    <div class="video-label">Håndsporing</div>
   </div>
 
   <div id="panelHotzone" class="panel-hotzone" role="button" tabindex="0" aria-label="Vis innstillinger" title="Vis innstillinger"></div>
@@ -1541,10 +1532,10 @@
 
             const id = `${handIndex}-${finger.index}`;
             nextTargets.set(id, {
-              uv: new THREE.Vector2(
-                clamp(1 - tip.x, 0.02, 0.98),
-                clamp(1 - tip.y, 0.02, 0.98)
-              ),
+              // Match the same visible/cropped camera area that is shown in the
+              // tracking popup. This makes the visible left/right/top/bottom
+              // edge of the camera popup map to the full drawing canvas.
+              uv: videoPointToCanvasUv(tip),
               seed: handIndex * 3.17 + finger.index * 0.431,
               label: finger.label,
               index: finger.index
@@ -1555,34 +1546,64 @@
         handState.fingerTargets = nextTargets;
       }
 
-      function videoPointToOverlay(point) {
+      function getVideoFitLayout() {
         const rect = handOverlay.getBoundingClientRect();
-        const videoWidth = handVideo.videoWidth || rect.width || 1;
-        const videoHeight = handVideo.videoHeight || rect.height || 1;
-        const sourceAspect = videoWidth / videoHeight;
-        const targetAspect = rect.width / Math.max(1, rect.height);
+        const rectWidth = Math.max(1, rect.width);
+        const rectHeight = Math.max(1, rect.height);
+        const videoWidth = handVideo.videoWidth || rectWidth;
+        const videoHeight = handVideo.videoHeight || rectHeight;
+        const sourceAspect = videoWidth / Math.max(1, videoHeight);
+        const targetAspect = rectWidth / rectHeight;
+        const objectFit = getComputedStyle(handVideo).objectFit || "cover";
 
-        let drawWidth = rect.width;
-        let drawHeight = rect.height;
+        let drawWidth = rectWidth;
+        let drawHeight = rectHeight;
         let offsetX = 0;
         let offsetY = 0;
 
-        // Match CSS object-fit: cover, so the overlay follows the visible video crop.
-        if (sourceAspect > targetAspect) {
-          drawHeight = rect.height;
-          drawWidth = drawHeight * sourceAspect;
-          offsetX = (rect.width - drawWidth) * 0.5;
-        } else {
-          drawWidth = rect.width;
+        // Match the browser's video sizing. With cover, the source is cropped.
+        // With contain, the source is letterboxed. The same layout is used both
+        // for the visible overlay and for drawing-coordinate remapping.
+        const useContain = objectFit === "contain";
+        const shouldFitByWidth = useContain
+          ? sourceAspect > targetAspect
+          : sourceAspect < targetAspect;
+
+        if (shouldFitByWidth) {
+          drawWidth = rectWidth;
           drawHeight = drawWidth / sourceAspect;
-          offsetY = (rect.height - drawHeight) * 0.5;
+          offsetY = (rectHeight - drawHeight) * 0.5;
+        } else {
+          drawHeight = rectHeight;
+          drawWidth = drawHeight * sourceAspect;
+          offsetX = (rectWidth - drawWidth) * 0.5;
         }
+
+        return { rectWidth, rectHeight, drawWidth, drawHeight, offsetX, offsetY };
+      }
+
+      function videoPointToOverlay(point) {
+        const layout = getVideoFitLayout();
 
         return {
           // The video is mirrored with CSS scaleX(-1), so the overlay mirrors x too.
-          x: offsetX + (1 - point.x) * drawWidth,
-          y: offsetY + point.y * drawHeight
+          x: layout.offsetX + (1 - point.x) * layout.drawWidth,
+          y: layout.offsetY + point.y * layout.drawHeight
         };
+      }
+
+      function videoPointToCanvasUv(point) {
+        const layout = getVideoFitLayout();
+        const overlayPoint = videoPointToOverlay(point);
+
+        // Convert the same visible/cropped camera rectangle shown in the popup
+        // into full-screen drawing UVs. This fixes the old behavior where raw
+        // MediaPipe x/y coordinates could only reach part of the canvas when
+        // the popup used object-fit: cover.
+        return new THREE.Vector2(
+          clamp(overlayPoint.x / layout.rectWidth, 0.0, 1.0),
+          clamp(1 - overlayPoint.y / layout.rectHeight, 0.0, 1.0)
+        );
       }
 
       function drawHandsOverlay(hands) {
