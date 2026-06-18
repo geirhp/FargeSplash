@@ -27,6 +27,39 @@
       --magenta: #ff3ef0;
       --green: #62ff59;
       --shadow: 0 32px 90px rgba(0, 0, 0, 0.58);
+
+      /* =========================================================
+         TRACKING-VINDU: RASK JUSTERING
+         Endre bare disse verdiene for å flytte/skalere kamera-popupen.
+
+         Tips:
+         - Helt nederst til høyre på mobil:
+           --tracking-mobile-top: auto;
+           --tracking-mobile-bottom: calc(12px + env(safe-area-inset-bottom));
+           --tracking-phone-top: auto;
+           --tracking-phone-bottom: calc(12px + env(safe-area-inset-bottom));
+
+         - Høyere opp på mobil: øk bottom, f.eks. 220px.
+         - Større vindu: øk width-verdiene.
+         - Mindre cropping: sett --tracking-video-fit: contain;
+         ========================================================= */
+      --tracking-desktop-right: 24px;
+      --tracking-desktop-bottom: 24px;
+      --tracking-desktop-width: min(190px, 34vw);
+
+      --tracking-mobile-top: auto;
+      --tracking-mobile-right: calc(12px + env(safe-area-inset-right));
+      --tracking-mobile-bottom: calc(12px + env(safe-area-inset-bottom));
+      --tracking-mobile-width: min(170px, 40vw);
+
+      --tracking-phone-top: auto;
+      --tracking-phone-right: calc(12px + env(safe-area-inset-right));
+      --tracking-phone-bottom: calc(12px + env(safe-area-inset-bottom));
+      --tracking-phone-width: min(150px, 42vw);
+
+      --tracking-aspect-ratio: 9 / 16;
+      --tracking-video-fit: cover;
+      --tracking-video-position: center center;
     }
 
     * {
@@ -409,10 +442,10 @@
 
     .video-shell {
       position: fixed;
-      right: 24px;
-      bottom: 24px;
+      right: var(--tracking-desktop-right);
+      bottom: var(--tracking-desktop-bottom);
       z-index: 3;
-      width: min(190px, 34vw);
+      width: var(--tracking-desktop-width);
       padding: 10px;
       border-radius: 18px;
       border: 1px solid rgba(255, 255, 255, 0.13);
@@ -443,7 +476,7 @@
     .video-stage {
       position: relative;
       width: 100%;
-      aspect-ratio: 9 / 16;
+      aspect-ratio: var(--tracking-aspect-ratio);
       border-radius: 12px;
       overflow: hidden;
       background: #020202;
@@ -460,8 +493,8 @@
 
     #handVideo {
       display: block;
-      object-fit: cover;
-      object-position: center center;
+      object-fit: var(--tracking-video-fit);
+      object-position: var(--tracking-video-position);
       transform: scaleX(-1);
       filter: saturate(0) contrast(1.05) brightness(0.82);
     }
@@ -493,10 +526,10 @@
       }
 
       .video-shell {
-        top: calc(84px + env(safe-area-inset-top));
-        right: calc(12px + env(safe-area-inset-right));
-        bottom: auto;
-        width: min(170px, 40vw);
+        top: var(--tracking-mobile-top);
+        right: var(--tracking-mobile-right);
+        bottom: var(--tracking-mobile-bottom);
+        width: var(--tracking-mobile-width);
       }
     }
 
@@ -528,8 +561,10 @@
       }
 
       .video-shell {
-        top: calc(74px + env(safe-area-inset-top));
-        width: min(150px, 42vw);
+        top: var(--tracking-phone-top);
+        right: var(--tracking-phone-right);
+        bottom: var(--tracking-phone-bottom);
+        width: var(--tracking-phone-width);
       }
     }
   </style>
